@@ -9,7 +9,7 @@ export default function Home() {
             <span className="grid size-9 place-items-center rounded-xl bg-violet-600 font-semibold text-white shadow-sm shadow-violet-200">Q</span>
             <span className="text-lg font-semibold tracking-tight text-slate-950">QualiAgent</span>
           </a>
-          <span className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-violet-700">Phase 1 · Local demo</span>
+          <span className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-violet-700">AI Analysis · Human Review</span>
         </div>
       </header>
 
@@ -23,7 +23,7 @@ export default function Home() {
       </main>
 
       <footer className="mt-14 border-t border-slate-200">
-        <div className="mx-auto max-w-7xl px-4 py-6 text-sm text-slate-500 sm:px-6 lg:px-8">Deterministic local analysis for Phase 1. No external services are connected.</div>
+        <div className="mx-auto max-w-7xl px-4 py-6 text-sm text-slate-500 sm:px-6 lg:px-8">AI-assisted QA decision support. Every release recommendation requires human review.</div>
       </footer>
     </div>
   );

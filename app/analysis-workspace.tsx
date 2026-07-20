@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { AnalysisResult, RiskLevel, RiskSeverity, TestPriority } from "@/lib/analysis-types";
-import { analyzeDiff, solanaDemo, webDemo } from "@/lib/demo-data";
+import { parseAnalyzeResponse, type AnalysisApiError } from "@/lib/analyze-api";
+import { solanaDemo, webDemo } from "@/lib/demo-data";
 
 const severityStyle: Record<RiskSeverity, string> = {
   low: "border-sky-200 bg-sky-50 text-sky-700",
@@ -25,31 +26,37 @@ export function AnalysisWorkspace() {
   const [diff, setDiff] = useState("");
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState("");
+  const [apiError, setApiError] = useState<AnalysisApiError | null>(null);
+  const [isDemoFallback, setIsDemoFallback] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const resultsRef = useRef<HTMLElement>(null);
-  const timeoutRef = useRef<number | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const focusFrameRef = useRef<number | null>(null);
   const requestVersionRef = useRef(0);
   const currentDiffRef = useRef(diff);
+  const isLoadingRef = useRef(false);
 
   function invalidatePendingAnalysis() {
     requestVersionRef.current += 1;
-    if (timeoutRef.current !== null) {
-      window.clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
+    if (abortControllerRef.current !== null) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
     }
     if (focusFrameRef.current !== null) {
       window.cancelAnimationFrame(focusFrameRef.current);
       focusFrameRef.current = null;
     }
     setResult(null);
+    setApiError(null);
+    setIsDemoFallback(false);
+    isLoadingRef.current = false;
     setIsLoading(false);
   }
 
   useEffect(() => {
     return () => {
       requestVersionRef.current += 1;
-      if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current);
+      abortControllerRef.current?.abort();
       if (focusFrameRef.current !== null) window.cancelAnimationFrame(focusFrameRef.current);
     };
   }, []);
@@ -68,8 +75,15 @@ export function AnalysisWorkspace() {
     if (error) setError("");
   }
 
-  function analyze() {
-    if (isLoading) return;
+  function focusResults() {
+    focusFrameRef.current = window.requestAnimationFrame(() => {
+      focusFrameRef.current = null;
+      resultsRef.current?.focus();
+    });
+  }
+
+  async function analyze() {
+    if (isLoadingRef.current) return;
 
     invalidatePendingAnalysis();
     const diffSnapshot = diff;
@@ -77,24 +91,80 @@ export function AnalysisWorkspace() {
       setError("Paste a code diff or load a demo before analyzing the change.");
       return;
     }
+    if (diff.length > 30_000) {
+      setError("The code diff must be 30,000 characters or fewer.");
+      return;
+    }
     setError("");
+    isLoadingRef.current = true;
     setIsLoading(true);
     const requestVersion = requestVersionRef.current;
-    timeoutRef.current = window.setTimeout(() => {
-      timeoutRef.current = null;
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      const response = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ diff: diffSnapshot }),
+        signal: controller.signal,
+      });
+      const rawResponse: unknown = await response.json().catch(() => null);
+      const parsedResponse = parseAnalyzeResponse(rawResponse);
+
       if (
+        controller.signal.aborted ||
         requestVersionRef.current !== requestVersion ||
         currentDiffRef.current !== diffSnapshot
       ) {
         return;
       }
-      setResult(analyzeDiff(diffSnapshot));
-      setIsLoading(false);
-      focusFrameRef.current = window.requestAnimationFrame(() => {
-        focusFrameRef.current = null;
-        resultsRef.current?.focus();
-      });
-    }, 3000);
+
+      if (!parsedResponse || response.ok !== parsedResponse.ok) {
+        throw new Error("INVALID_API_RESPONSE");
+      }
+      if (!parsedResponse.ok) {
+        setApiError(parsedResponse.error);
+        throw new Error("ANALYSIS_REQUEST_FAILED");
+      }
+
+      setResult(parsedResponse.result);
+      focusResults();
+    } catch (requestError: unknown) {
+      if (
+        controller.signal.aborted ||
+        requestVersionRef.current !== requestVersion ||
+        currentDiffRef.current !== diffSnapshot
+      ) {
+        return;
+      }
+
+      const fallbackResult =
+        diffSnapshot === webDemo.diff
+          ? webDemo.analysis
+          : diffSnapshot === solanaDemo.diff
+            ? solanaDemo.analysis
+            : null;
+
+      if (fallbackResult) {
+        setApiError(null);
+        setIsDemoFallback(true);
+        setResult(fallbackResult);
+        focusResults();
+      } else if (!(requestError instanceof Error && requestError.message === "ANALYSIS_REQUEST_FAILED")) {
+        setApiError({
+          code: "PROVIDER_ERROR",
+          message: "AI analysis is temporarily unavailable. Please try again.",
+          retryable: true,
+        });
+      }
+    } finally {
+      if (requestVersionRef.current === requestVersion) {
+        abortControllerRef.current = null;
+        isLoadingRef.current = false;
+        setIsLoading(false);
+      }
+    }
   }
 
   return (
@@ -105,7 +175,7 @@ export function AnalysisWorkspace() {
             <p className="eyebrow">Change input</p>
             <h2 id="analyzer-heading" className="mt-1 text-xl font-semibold text-slate-950">What changed?</h2>
           </div>
-          <p className="text-sm text-slate-500">Local demo analysis · no data leaves your browser</p>
+          <p className="text-sm text-slate-500">Server-side AI analysis · human review required</p>
         </div>
         <label htmlFor="code-diff" className="sr-only">Code diff</label>
         <textarea
@@ -121,7 +191,7 @@ export function AnalysisWorkspace() {
         />
         <div className="mt-3 min-h-6">
           {error ? <p id="diff-error" role="alert" className="text-sm font-medium text-red-600">{error}</p> :
-            <p id="diff-help" className="text-sm text-slate-500">Load a realistic fixture or paste your own diff. Phase 1 maps changes to deterministic demo results.</p>}
+            <p id="diff-help" className="text-sm text-slate-500">Load a realistic fixture or paste your own diff for semantic QA analysis.</p>}
         </div>
         <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="grid gap-3 sm:grid-cols-2">
@@ -134,11 +204,20 @@ export function AnalysisWorkspace() {
         </div>
       </section>
 
+      {apiError && (
+        <section role="alert" aria-labelledby="api-error-heading" className="card mt-6 border-red-200 p-5 sm:p-6">
+          <p className="eyebrow">Analysis unavailable</p>
+          <h2 id="api-error-heading" className="mt-1 text-lg font-semibold text-slate-950">We could not analyze this change</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">{apiError.message}</p>
+          {apiError.retryable && <button type="button" className="button-secondary mt-4" onClick={analyze}>Retry Analysis</button>}
+        </section>
+      )}
+
       <div aria-live="polite" aria-atomic="true" className="sr-only">
         {isLoading ? "Analysis in progress" : result ? "Analysis complete" : ""}
       </div>
       {isLoading && <LoadingState />}
-      {result && <AnalysisResults result={result} resultsRef={resultsRef} />}
+      {result && <AnalysisResults result={result} resultsRef={resultsRef} isDemoFallback={isDemoFallback} />}
     </>
   );
 }
@@ -150,7 +229,7 @@ function LoadingState() {
   </div></section>;
 }
 
-function AnalysisResults({ result, resultsRef }: { result: AnalysisResult; resultsRef: React.RefObject<HTMLElement | null> }) {
+function AnalysisResults({ result, resultsRef, isDemoFallback }: { result: AnalysisResult; resultsRef: React.RefObject<HTMLElement | null>; isDemoFallback: boolean }) {
   if (result.kind === "unsupported") {
     return (
       <section ref={resultsRef} tabIndex={-1} aria-labelledby="unsupported-heading" className="mt-6 outline-none">
@@ -173,7 +252,7 @@ function AnalysisResults({ result, resultsRef }: { result: AnalysisResult; resul
       <div className="card overflow-hidden">
         <div className="border-b border-slate-200 p-5 sm:p-7">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-            <div className="max-w-3xl"><p className="eyebrow">Analysis complete</p><h2 id="results-heading" className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">QA decision brief</h2><p className="mt-3 leading-7 text-slate-600">{result.summary}</p></div>
+            <div className="max-w-3xl"><p className="eyebrow">{isDemoFallback ? "Local demo fallback" : "Analysis complete"}</p><h2 id="results-heading" className="mt-1 text-2xl font-semibold tracking-tight text-slate-950">QA decision brief</h2><p className="mt-3 leading-7 text-slate-600">{result.summary}</p></div>
             <div className="flex shrink-0 items-center gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4">
               <div><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Risk score</p><p className="mt-1 text-4xl font-semibold tabular-nums text-slate-950">{result.riskScore}<span className="text-lg text-slate-400">/100</span></p></div>
               <span className={`rounded-full px-3 py-1 text-sm font-semibold capitalize ${levelStyle[result.riskLevel]}`}>{result.riskLevel} risk</span>

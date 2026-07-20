@@ -10,6 +10,12 @@ export function createRiskScore(value: number): RiskScore {
   return value as RiskScore;
 }
 
+export function deriveRiskLevel(score: RiskScore): RiskLevel {
+  if (score <= 39) return "low";
+  if (score <= 69) return "medium";
+  return "high";
+}
+
 export type KeyRisk = {
   title: string;
   severity: RiskSeverity;

@@ -1,9 +1,13 @@
 import {
   createRiskScore,
+  deriveRiskLevel,
   type AnalysisResult,
   type SupportedAnalysisResult,
   type UnsupportedAnalysisResult,
 } from "@/lib/analysis-types";
+
+const webRiskScore = createRiskScore(64);
+const solanaRiskScore = createRiskScore(87);
 
 export type DemoFixture = {
   id: "web" | "solana";
@@ -34,8 +38,8 @@ index 2f71be1..6bb29f4 100644
   analysis: {
     kind: "supported",
     summary: "Login validation now normalizes email addresses and rejects passwords shorter than eight characters before authentication.",
-    riskScore: createRiskScore(64),
-    riskLevel: "medium",
+    riskScore: webRiskScore,
+    riskLevel: deriveRiskLevel(webRiskScore),
     affectedAreas: ["Login form validation", "Authentication API contract", "Existing user access", "Error messaging"],
     keyRisks: [
       {
@@ -96,8 +100,8 @@ index 43aa9cd..f18db21 100644
   analysis: {
     kind: "supported",
     summary: "Payment submission now retries through a fallback RPC and stops waiting after 12 seconds, with background confirmation polling.",
-    riskScore: createRiskScore(87),
-    riskLevel: "high",
+    riskScore: solanaRiskScore,
+    riskLevel: deriveRiskLevel(solanaRiskScore),
     affectedAreas: ["Wallet signing", "Transaction submission", "RPC failover", "Confirmation tracking", "Payment UI state"],
     keyRisks: [
       { title: "Duplicate transaction submission", severity: "critical", explanation: "A first submission may reach the network even when the RPC call throws; immediately submitting again can create duplicate payment attempts.", evidence: "Every error from the first `sendTransaction` triggers a second submission through `fallbackConnection` without checking chain state." },
