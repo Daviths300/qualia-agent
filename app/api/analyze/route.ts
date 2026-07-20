@@ -15,7 +15,7 @@ import { parseSupportedAnalysisResult } from "@/lib/analysis-validation";
 export const runtime = "nodejs";
 
 const MAX_DIFF_LENGTH = 30_000;
-const SERVER_TIMEOUT_MS = 25_000;
+const SERVER_TIMEOUT_MS = 45_000;
 const FALLBACK_MODEL = "gpt-5.6";
 
 const analysisSchema = {
